@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CS: Top-Down Tactical Web Edition - Enhanced</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
+
+        body {
+            font-family: 'VT323', monospace;
+            background-color: #0d1117;
+            color: #e6edf3;
+            user-select: none;
+            overflow: hidden;
+        }
+
+        .pixel-font { font-family: 'Press Start 2P', cursive; }
+
+        .game-btn {
+            background: #1f2937;
+            border: 2px solid #4b5563;
+            box-shadow: 0 4px 0 #000;
+            transition: all 0.1s ease;
+        }
+        .game-btn:active {
+            box-shadow: 0 0 0 #000;
+            transform: translateY(4px);
+        }
+
+        /* Scanline Overlay */
+        .crt-overlay::before {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+            z-index: 10;
+            background-size: 100% 4px;
+            pointer-events: none;
+        }
+
+        /* Screen Hurt Flash */
+        @keyframes hurtFlash {
+            0% { box-shadow: inset 0 0 0px rgba(255,0,0,0); }
+            50% { box-shadow: inset 0 0 50px rgba(255,0,0,0.6); }
+            100% { box-shadow: inset 0 0 0px rgba(255,0,0,0); }
+        }
+        .hurt-effect {
+            animation: hurtFlash 0.2s ease-out;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-2">
+
+    <!-- Header Section -->
+    <div class="w-full max-w-4xl bg-gray-900 border-2 border-gray-700 rounded-t-xl p-3 flex justify-between items-center z-20">
+        <div class="flex items-center gap-3">
+            <h1 class="pixel-font text-xs md:text-sm text-amber-400 tracking-wider">COUNTER-STRIKE: TACTICAL 2.0</h1>
+            <span class="text-xs bg-blue-900/60 text-blue-300 px-2 py-0.5 rounded border border-blue-600">DE_DUST2 2D</span>
+        </div>
+        <div class="flex items-center gap-3">
+            <button id="btn-audio" class="px-3 py-1 bg-gray-800 border border-gray-600 rounded text-xs text-green-400 font-bold hover:bg-gray-700">
+                🔊 SOUND: ON
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Game Canvas Container -->
+    <div id="game-container" class="relative w-full max-w-4xl bg-black rounded-b-xl overflow-hidden crt-overlay border-4 border-gray-800 shadow-2xl">
+        <canvas id="csCanvas" class="w-full aspect-[16/9] block bg-[#1a1714] cursor-crosshair"></canvas>
+
+        <!-- Top Match Info HUD -->
+        <div class="absolute top-3 left-4 right-4 flex justify-between items-center pointer-events-none z-20 text-sm pixel-font">
+            <div class="bg-blue-950/80 border border-blue-500 px-3 py-1.5 rounded text-blue-300">
+                CT: <span id="ui-ct-score">0</span>
+            </div>
+            <div id="ui-status-text" class="bg-black/80 border border-amber-500 px-4 py-1.5 rounded text-amber-300 text-center">
+                ELIMINATE ALL TERRORISTS
+            </div>
+            <div class="bg-red-950/80 border border-red-500 px-3 py-1.5 rounded text-red-300">
+                T: <span id="ui-t-score">0</span>
+            </div>
+        </div>
+
+        <!-- GameOver / Mission Screen -->
+        <div id="modal-overlay" class="hidden absolute inset-0 bg-black/85 backdrop-blur-md z-30 flex flex-col items-center justify-center p-6 text-center">
+            <h2 id="modal-title" class="pixel-font text-2xl md:text-4xl text-amber-400 mb-4">COUNTER-TERRORISTS WIN!</h2>
+            <p id="modal-body" class="text-lg md:text-2xl text-gray-300 max-w-xl mb-6">Round cleared successfully.</p>
+            <button id="modal-btn" class="game-btn pixel-font text-sm text-amber-300 px-8 py-3 rounded hover:bg-gray-700 cursor-pointer">
+                NEXT ROUND
+            </button>
+        </div>
+    </div>
+
+    <!-- Bottom HUD & Controls -->
+    <div class="w-full max-w-4xl mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
+        <!-- Status Display -->
+        <div class="bg-gray-900 border border-gray-700 p-3 rounded flex justify-around items-center">
+            <div class="text-center">
+                <div class="text-xs text-amber-500 font-bold">HP</div>
+                <div id="hud-hp" class="text-2xl font-black text-green-400">100</div>
+            </div>
+            <div class="text-center">
+                <div class="text-xs text-amber-500 font-bold">ARMOR</div>
+                <div id="hud-armor" class="text-2xl font-black text-blue-400">100</div>
+            </div>
+            <div class="text-center">
+                <div class="text-xs text-amber-500 font-bold">MONEY</div>
+                <div id="hud-money" class="text-2xl font-black text-emerald-400">$800</div>
+            </div>
+            <div class="text-center">
+                <div class="text-xs text-amber-500 font-bold">AMMO</div>
+                <div class="text-2xl font-black text-yellow-300"><span id="hud-clip">30</span>/<span id="hud-reserve">90</span></div>
+            </div>
+        </div>
+
+        <!-- Controls Guide -->
+        <div class="bg-gray-900 border border-gray-700 p-2.5 rounded text-xs space-y-1">
+            <div class="text-amber-400 font-bold flex justify-between">
+                <span>🎮 CONTROLS:</span>
+                <span id="hud-weapon-name" class="text-cyan-300">WEAPON: AK-47</span>
+            </div>
+            <div>• <kbd class="px-1 bg-gray-800 rounded text-cyan-300">WASD</kbd>: Move | <kbd class="px-1 bg-gray-800 rounded text-pink-400">L-Click</kbd>: Shoot</div>
+            <div>• <kbd class="px-1 bg-gray-800 rounded text-yellow-300">R</kbd>: Reload | <kbd class="px-1 bg-gray-800 rounded text-yellow-300">1/2/3</kbd>: Switch Weapon</div>
+        </div>
+
+        <!-- Mobile Touch Action Buttons -->
+        <div class="bg-gray-900 border border-gray-700 p-2.5 rounded flex items-center justify-around gap-2">
+            <button id="btn-fire-touch" class="game-btn flex-1 py-3 text-red-400 font-bold pixel-font text-xs">FIRE 🔥</button>
+            <button id="btn-reload-touch" class="game-btn flex-1 py-3 text-amber-300 font-bold pixel-font text-xs">RELOAD ↻</button>
+        </div>
+    </div>
+
+    <!-- GAME ENGINE -->
+    <script>
+        // --- Web Audio Synth ---
+        class CSAudioEngine {
+            constructor() {
+                this.ctx = null;
+                this.enabled = true;
+            }
+            init() {
+                if (!this.ctx) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    this.ctx = new AudioContext();
+                }
+                if (this.ctx.state === 'suspended') this.ctx.resume();
+            }
+            playShoot(type = 'rifle') {
+                if (!this.enabled) return;
+                this.init();
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                
+                if (type === 'sniper') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(600, now);
+                    osc.frequency.exponentialRampToValueAtTime(20, now + 0.3);
+                    gain.gain.setValueAtTime(0.5, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                } else if (type === 'smg') {
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(500, now);
+                    osc.frequency.exponentialRampToValueAtTime(40, now + 0.08);
+                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+                } else {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(380, now);
+                    osc.frequency.exponentialRampToValueAtTime(30, now + 0.12);
+                    gain.gain.setValueAtTime(0.3, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+                }
+                osc.connect(gain); gain.connect(this.ctx.destination);
+                osc.start(now); osc.stop(now + (type === 'sniper' ? 0.3 : 0.12));
+            }
+            playHit() {
+                if (!this.enabled) return;
+                this.init();
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(140, now);
+                osc.frequency.exponentialRampToValueAtTime(40, now + 0.08);
+                gain.gain.setValueAtTime(0.25, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+                osc.connect(gain); gain.connect(this.ctx.destination);
+                osc.start(now); osc.stop(now + 0.08);
+            }
+            playReload() {
+                if (!this.enabled) return;
+                this.init();
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(550, now);
+                osc.frequency.linearRampToValueAtTime(250, now + 0.25);
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+                osc.connect(gain); gain.connect(this.ctx.destination);
+                osc.start(now); osc.stop(now + 0.25);
+            }
+        }
+
+        const audio = new CSAudioEngine();
+        document.getElementById('btn-audio').onclick = () => {
+            audio.enabled = !audio.enabled;
+            const btn = document.getElementById('btn-audio');
+            btn.textContent = audio.enabled ? '🔊 SOUND: ON' : '🔇 SOUND: OFF';
+            btn.className = audio.enabled ? 'px-3 py-1 bg-gray-800 border border-gray-600 rounded text-xs text-green-400 font-bold' : 'px-3 py-1 bg-gray-800 border border-gray-600 rounded text-xs text-red-400 font-bold';
+        };
+
+        // --- Canvas & Game State ---
+        const canvas = document.getElementById('csCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 960;
+        canvas.height = 540;
+
+        const WEAPONS = {
+            'AK-47': { name: 'AK-47', damage: 35, clipSize: 30, reserve: 90, reloadTime: 1000, fireRate: 120, type: 'rifle' },
+            'MP5':   { name: 'MP5',   damage: 20, clipSize: 40, reserve: 120, reloadTime: 800, fireRate: 80, type: 'smg' },
+            'SCOUT': { name: 'SCOUT', damage: 85, clipSize: 10, reserve: 30, reloadTime: 1500, fireRate: 600, type: 'sniper' }
+        };
+
+        const state = {
+            player: { x: 100, y: 270, angle: 0, hp: 100, armor: 100, speed: 3.5, money: 800 },
+            currentWeaponKey: 'AK-47',
+            ammoClip: 30,
+            ammoReserve: 90,
+            isReloading: false,
+            lastShotTime: 0,
+            ctScore: 0,
+            tScore: 0,
+            mouseX: 480,
+            mouseY: 270,
+            isMouseDown: false,
+            bullets: [],
+            enemyBullets: [],
+            particles: [],
+            enemies: [],
+            crates: [
+                { x: 280, y: 130, w: 90, h: 90 },
+                { x: 280, y: 320, w: 90, h: 90 },
+                { x: 560, y: 180, w: 110, h: 160 },
+                { x: 180, y: 410, w: 140, h: 50 },
+                { x: 740, y: 80, w: 80, h: 80 }
+            ]
+        };
+
+        const keys = { w: false, a: false, s: false, d: false };
+
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'KeyW') keys.w = true;
+            if (e.code === 'KeyA') keys.a = true;
+            if (e.code === 'KeyS') keys.s = true;
+            if (e.code === 'KeyD') keys.d = true;
+            if (e.code === 'KeyR') reloadGun();
+            if (e.code === 'Digit1') switchWeapon('AK-47');
+            if (e.code === 'Digit2') switchWeapon('MP5');
+            if (e.code === 'Digit3') switchWeapon('SCOUT');
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'KeyW') keys.w = false;
+            if (e.code === 'KeyA') keys.a = false;
+            if (e.code === 'KeyS') keys.s = false;
+            if (e.code === 'KeyD') keys.d = false;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            state.mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+            state.mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0) {
+                state.isMouseDown = true;
+                shootGun();
+            }
+        });
+        window.addEventListener('mouseup', () => state.isMouseDown = false);
+
+        document.getElementById('btn-fire-touch').onclick = () => shootGun();
+        document.getElementById('btn-reload-touch').onclick = () => reloadGun();
+
+        function switchWeapon(key) {
+            if (state.isReloading) return;
+            state.currentWeaponKey = key;
+            const w = WEAPONS[key];
+            state.ammoClip = w.clipSize;
+            state.ammoReserve = w.reserve;
+            document.getElementById('hud-weapon-name').textContent = `WEAPON: ${w.name}`;
+            updateHUD();
+        }
+
+        function spawnEnemies() {
+            state.enemies = [
+                { x: 780, y: 100, hp: 100, maxHp: 100, lastShot: 0, state: 'patrol', patrolDir: 1 },
+                { x: 840, y: 270, hp: 120, maxHp: 120, lastShot: 0, state: 'patrol', patrolDir: -1 },
+                { x: 780, y: 440, hp: 100, maxHp: 100, lastShot: 0, state: 'patrol', patrolDir: 1 },
+                { x: 620, y: 400, hp: 100, maxHp: 100, lastShot: 0, state: 'patrol', patrolDir: 1 }
+            ];
+        }
+        spawnEnemies();
+
+        function reloadGun() {
+            const w = WEAPONS[state.currentWeaponKey];
+            if (state.isReloading || state.ammoClip === w.clipSize || state.ammoReserve <= 0) return;
+            state.isReloading = true;
+            audio.playReload();
+            document.getElementById('ui-status-text').textContent = 'RELOADING MAGAZINE...';
+
+            setTimeout(() => {
+                const needed = w.clipSize - state.ammoClip;
+                const added = Math.min(needed, state.ammoReserve);
+                state.ammoClip += added;
+                state.ammoReserve -= added;
+                state.isReloading = false;
+                document.getElementById('ui-status-text').textContent = 'ELIMINATE ALL TERRORISTS';
+                updateHUD();
+            }, w.reloadTime);
+        }
+
+        function shootGun() {
+            if (state.isReloading) return;
+            const now = Date.now();
+            const w = WEAPONS[state.currentWeaponKey];
+            if (now - state.lastShotTime < w.fireRate) return;
+
+            if (state.ammoClip <= 0) {
+                reloadGun();
+                return;
+            }
+
+            state.ammoClip--;
+            state.lastShotTime = now;
+            audio.playShoot(w.type);
+            updateHUD();
+
+            const angle = Math.atan2(state.mouseY - state.player.y, state.mouseX - state.player.x);
+            // Add slight spread based on weapon
+            const spread = w.type === 'sniper' ? 0.01 : (w.type === 'smg' ? 0.08 : 0.04);
+            const finalAngle = angle + (Math.random() - 0.5) * spread;
+
+            state.bullets.push({
+                x: state.player.x + Math.cos(angle) * 20,
+                y: state.player.y + Math.sin(angle) * 20,
+                vx: Math.cos(finalAngle) * 16,
+                vy: Math.sin(finalAngle) * 16,
+                damage: w.damage
+            });
+
+            // Muzzle flash particle
+            for (let i = 0; i < 4; i++) {
+                state.particles.push({
+                    x: state.player.x + Math.cos(angle) * 25,
+                    y: state.player.y + Math.sin(angle) * 25,
+                    vx: (Math.random() - 0.5) * 3,
+                    vy: (Math.random() - 0.5) * 3,
+                    life: 5,
+                    color: '#fbbf24'
+                });
+            }
+        }
+
+        function updateHUD() {
+            document.getElementById('hud-hp').textContent = Math.max(0, state.player.hp);
+            document.getElementById('hud-armor').textContent = state.player.armor;
+            document.getElementById('hud-money').textContent = `$${state.player.money}`;
+            document.getElementById('hud-clip').textContent = state.ammoClip;
+            document.getElementById('hud-reserve').textContent = state.ammoReserve;
+            document.getElementById('ui-ct-score').textContent = state.ctScore;
+            document.getElementById('ui-t-score').textContent = state.tScore;
+        }
+
+        function showEndModal(title, text) {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-body').textContent = text;
+            const modal = document.getElementById('modal-overlay');
+            modal.classList.remove('hidden');
+
+            document.getElementById('modal-btn').onclick = () => {
+                modal.classList.add('hidden');
+                resetRound();
+            };
+        }
+
+        function resetRound() {
+            state.player.x = 100;
+            state.player.y = 270;
+            state.player.hp = 100;
+            state.player.armor = Math.min(100, state.player.armor + 25);
+            state.player.money += 300;
+            switchWeapon(state.currentWeaponKey);
+            state.bullets = [];
+            state.enemyBullets = [];
+            spawnEnemies();
+            updateHUD();
+        }
+
+        function isCollidingWithCrates(x, y, radius = 15) {
+            for (let c of state.crates) {
+                if (x + radius > c.x && x - radius < c.x + c.w &&
+                    y + radius > c.y && y - radius < c.y + c.h) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // --- Main Update Loop ---
+        function update() {
+            // Continuous firing for automatic weapons
+            if (state.isMouseDown && WEAPONS[state.currentWeaponKey].type !== 'sniper') {
+                shootGun();
+            }
+
+            // Player Angle
+            state.player.angle = Math.atan2(state.mouseY - state.player.y, state.mouseX - state.player.x);
+
+            // Movement
+            let dx = 0, dy = 0;
+            if (keys.w) dy -= 1;
+            if (keys.s) dy += 1;
+            if (keys.a) dx -= 1;
+            if (keys.d) dx += 1;
+
+            if (dx !== 0 && dy !== 0) { dx *= 0.7071; dy *= 0.7071; }
+
+            const nextX = state.player.x + dx * state.player.speed;
+            const nextY = state.player.y + dy * state.player.speed;
+
+            if (nextX > 20 && nextX < canvas.width - 20 && !isCollidingWithCrates(nextX, state.player.y)) {
+                state.player.x = nextX;
+            }
+            if (nextY > 20 && nextY < canvas.height - 20 && !isCollidingWithCrates(state.player.x, nextY)) {
+                state.player.y = nextY;
+            }
+
+            // Update Bullets
+            state.bullets.forEach(b => {
+                b.x += b.vx;
+                b.y += b.vy;
+
+                // Hit Crate
+                if (isCollidingWithCrates(b.x, b.y, 4)) {
+                    b.x = -100;
+                    for(let i=0; i<3; i++) {
+                        state.particles.push({ x: b.x, y: b.y, vx: (Math.random()-0.5)*2, vy: (Math.random()-0.5)*2, life: 8, color: '#a16207' });
+                    }
+                }
+
+                // Hit Enemy
+                state.enemies.forEach(e => {
+                    if (e.hp > 0 && Math.hypot(b.x - e.x, b.y - e.y) < 20) {
+                        e.hp -= b.damage;
+                        audio.playHit();
+                        b.x = -100;
+
+                        // Blood splatter particles
+                        for (let i = 0; i < 5; i++) {
+                            state.particles.push({ x: e.x, y: e.y, vx: (Math.random()-0.5)*4, vy: (Math.random()-0.5)*4, life: 12, color: '#ef4444' });
+                        }
+
+                        if (e.hp <= 0) {
+                            state.ctScore++;
+                            state.player.money += 300;
+                            updateHUD();
+                            if (state.enemies.every(enemy => enemy.hp <= 0)) {
+                                showEndModal("COUNTER-TERRORISTS WIN!", "All terrorists eliminated! +$300 bonus.");
+                            }
+                        }
+                    }
+                });
+            });
+            state.bullets = state.bullets.filter(b => b.x > 0 && b.x < canvas.width && b.y > 0 && b.y < canvas.height);
+
+            // Enemy AI & Combat Logic
+            const now = Date.now();
+            state.enemies.forEach(e => {
+                if (e.hp <= 0) return;
+
+                const dist = Math.hypot(state.player.x - e.x, state.player.y - e.y);
+
+                if (dist < 480) {
+                    e.state = 'attack';
+                    // Move slightly or track player
+                    const eAngle = Math.atan2(state.player.y - e.y, state.player.x - e.x);
+                    
+                    // Slow tactical advance
+                    if (dist > 180) {
+                        const ex = e.x + Math.cos(eAngle) * 1.2;
+                        const ey = e.y + Math.sin(eAngle) * 1.2;
+                        if (!isCollidingWithCrates(ex, ey, 15)) {
+                            e.x = ex;
+                            e.y = ey;
+                        }
+                    }
+
+                    // Shoot Player
+                    if (now - e.lastShot > 1400) {
+                        e.lastShot = now;
+                        audio.playShoot('smg');
+                        state.enemyBullets.push({
+                            x: e.x,
+                            y: e.y,
+                            vx: Math.cos(eAngle) * 8.5,
+                            vy: Math.sin(eAngle) * 8.5
+                        });
+                    }
+                } else {
+                    // Patrol mode
+                    e.y += e.patrolDir * 0.8;
+                    if (e.y < 80 || e.y > 460) e.patrolDir *= -1;
+                }
+            });
+
+            // Enemy Bullets
+            state.enemyBullets.forEach(eb => {
+                eb.x += eb.vx;
+                eb.y += eb.vy;
+
+                if (isCollidingWithCrates(eb.x, eb.y, 4)) eb.x = -100;
+
+                if (Math.hypot(eb.x - state.player.x, eb.y - state.player.y) < 18) {
+                    let dmg = 18;
+                    if (state.player.armor > 0) {
+                        state.player.armor = Math.max(0, state.player.armor - 10);
+                        dmg = 10;
+                    }
+                    state.player.hp -= dmg;
+                    audio.playHit();
+                    eb.x = -100;
+                    updateHUD();
+
+                    // Trigger Hurt Screen Effect
+                    const container = document.getElementById('game-container');
+                    container.classList.add('hurt-effect');
+                    setTimeout(() => container.classList.remove('hurt-effect'), 200);
+
+                    if (state.player.hp <= 0) {
+                        state.tScore++;
+                        updateHUD();
+                        showEndModal("TERRORISTS WIN!", "You were eliminated in combat.");
+                    }
+                }
+            });
+            state.enemyBullets = state.enemyBullets.filter(eb => eb.x > 0 && eb.x < canvas.width && eb.y > 0 && eb.y < canvas.height);
+
+            // Particles update
+            state.particles.forEach(p => {
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+            });
+            state.particles = state.particles.filter(p => p.life > 0);
+        }
+
+        // --- Render Loop ---
+        function render() {
+            // Map Ground (Dust2 Sand Theme)
+            ctx.fillStyle = '#d4b26f';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Floor Grid Lines for depth
+            ctx.strokeStyle = '#c5a25f';
+            ctx.lineWidth = 1;
+            for(let x = 0; x < canvas.width; x += 60) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+            }
+            for(let y = 0; y < canvas.height; y += 60) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+            }
+
+            // Sand Crates (Obstacles)
+            state.crates.forEach(c => {
+                ctx.fillStyle = '#8c6530';
+                ctx.fillRect(c.x, c.y, c.w, c.h);
+                ctx.strokeStyle = '#573d1c';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(c.x, c.y, c.w, c.h);
+                // Crate cross pattern
+                ctx.beginPath();
+                ctx.moveTo(c.x, c.y); ctx.lineTo(c.x + c.w, c.y + c.h);
+                ctx.moveTo(c.x + c.w, c.y); ctx.lineTo(c.x, c.y + c.h);
+                ctx.stroke();
+            });
+
+            // Particles
+            state.particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, 3, 3);
+            });
+
+            // Enemies (Terrorists with Health Bars)
+            state.enemies.forEach(e => {
+                if (e.hp <= 0) return;
+                ctx.save();
+                ctx.translate(e.x, e.y);
+                
+                // Body
+                ctx.fillStyle = '#dc2626';
+                ctx.beginPath(); ctx.arc(0, 0, 16, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = '#7f1d1d'; ctx.lineWidth = 3; ctx.stroke();
+
+                // Enemy HP Bar
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(-18, -26, 36, 5);
+                ctx.fillStyle = '#22c55e';
+                ctx.fillRect(-18, -26, 36 * (e.hp / e.maxHp), 5);
+
+                ctx.restore();
+            });
+
+            // Player (CT Soldier)
+            ctx.save();
+            ctx.translate(state.player.x, state.player.y);
+            ctx.rotate(state.player.angle);
+
+            // Gun Barrel
+            ctx.fillStyle = '#111';
+            ctx.fillRect(8, 4, state.currentWeaponKey === 'SCOUT' ? 24 : 16, 5);
+
+            // Player Body
+            ctx.fillStyle = '#2563eb';
+            ctx.beginPath(); ctx.arc(0, 0, 16, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = '#1e3a8a'; ctx.lineWidth = 3; ctx.stroke();
+            ctx.restore();
+
+            // Bullets
+            ctx.fillStyle = '#fde047';
+            state.bullets.forEach(b => {
+                ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI * 2); ctx.fill();
+            });
+
+            ctx.fillStyle = '#f87171';
+            state.enemyBullets.forEach(eb => {
+                ctx.beginPath(); ctx.arc(eb.x, eb.y, 4, 0, Math.PI * 2); ctx.fill();
+            });
+
+            // Custom Tactical Crosshair
+            ctx.strokeStyle = '#34d399';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(state.mouseX, state.mouseY, 9, 0, Math.PI * 2);
+            ctx.moveTo(state.mouseX - 14, state.mouseY); ctx.lineTo(state.mouseX + 14, state.mouseY);
+            ctx.moveTo(state.mouseX, state.mouseY - 14); ctx.lineTo(state.mouseX, state.mouseY + 14);
+            ctx.stroke();
+        }
+
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        window.onload = () => {
+            updateHUD();
+            requestAnimationFrame(gameLoop);
+        };
+    </script>
+</body>
+</html>
